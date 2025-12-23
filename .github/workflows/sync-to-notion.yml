@@ -3,9 +3,12 @@ name: Sync Docs to Notion
 on:
   push:
     branches: [main]
-    paths:
-      - 'docs/**'
-      - 'README.md'
+    # 移除 paths 限制，监听所有文件变化
+    # 如果只想监听特定文件夹，可以添加：
+    # paths:
+    #   - 'docs/**'
+    #   - 'src/**'
+    #   - 'README.md'
   workflow_dispatch:
 
 jobs:
