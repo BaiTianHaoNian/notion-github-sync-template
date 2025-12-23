@@ -3,12 +3,6 @@ name: Sync Docs to Notion
 on:
   push:
     branches: [main]
-    # 移除 paths 限制，监听所有文件变化
-    # 如果只想监听特定文件夹，可以添加：
-    # paths:
-    #   - 'docs/**'
-    #   - 'src/**'
-    #   - 'README.md'
   workflow_dispatch:
 
 jobs:
@@ -25,7 +19,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm install @notionhq/client form-data node-fetch
+        run: npm install @notionhq/client
 
       - name: Sync to Notion
         env:
