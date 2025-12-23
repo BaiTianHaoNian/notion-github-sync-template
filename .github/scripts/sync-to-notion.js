@@ -58,6 +58,160 @@ const CODE_EXTENSIONS = {
 };
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico', '.bmp'];
+
+// ========== 语言规范化映射 ==========
+// Markdown 代码块中的语言别名 -> Notion 接受的语言名称
+const LANGUAGE_ALIAS_MAP = {
+  // Shell 相关
+  'sh': 'shell',
+  'bash': 'shell',
+  'zsh': 'shell',
+  'fish': 'shell',
+  'powershell': 'powershell',
+  'ps1': 'powershell',
+  'cmd': 'shell',
+  'bat': 'shell',
+  'terminal': 'shell',
+  'console': 'shell',
+  
+  // JavaScript/TypeScript
+  'js': 'javascript',
+  'jsx': 'javascript',
+  'ts': 'typescript',
+  'tsx': 'typescript',
+  'mjs': 'javascript',
+  'cjs': 'javascript',
+  'node': 'javascript',
+  
+  // Python
+  'py': 'python',
+  'py3': 'python',
+  'python3': 'python',
+  
+  // Web
+  'htm': 'html',
+  'scss': 'scss',
+  'less': 'less',
+  'styl': 'css',
+  'stylus': 'css',
+  
+  // Data formats
+  'yml': 'yaml',
+  'jsonc': 'json',
+  'json5': 'json',
+  
+  // C/C++
+  'c++': 'c++',
+  'cpp': 'c++',
+  'cc': 'c++',
+  'cxx': 'c++',
+  'h': 'c',
+  'hpp': 'c++',
+  
+  // Other languages
+  'rb': 'ruby',
+  'rs': 'rust',
+  'kt': 'kotlin',
+  'kts': 'kotlin',
+  'cs': 'c#',
+  'csharp': 'c#',
+  'fs': 'f#',
+  'fsharp': 'f#',
+  'vb': 'visual basic',
+  'md': 'markdown',
+  'mkd': 'markdown',
+  'tex': 'latex',
+  'dockerfile': 'docker',
+  'makefile': 'makefile',
+  'mk': 'makefile',
+  'proto': 'protobuf',
+  'graphql': 'graphql',
+  'gql': 'graphql',
+  'pl': 'perl',
+  'pm': 'perl',
+  'ex': 'elixir',
+  'exs': 'elixir',
+  'erl': 'erlang',
+  'hs': 'haskell',
+  'ml': 'ocaml',
+  'clj': 'clojure',
+  'cljs': 'clojure',
+  'lisp': 'lisp',
+  'scm': 'scheme',
+  'rkt': 'scheme',
+  'v': 'verilog',
+  'vhd': 'vhdl',
+  'vhdl': 'vhdl',
+  'pas': 'pascal',
+  'f90': 'fortran',
+  'f95': 'fortran',
+  'for': 'fortran',
+  'abap': 'abap',
+  'coffee': 'coffeescript',
+  'dart': 'dart',
+  'elm': 'elm',
+  'groovy': 'groovy',
+  'lua': 'lua',
+  'nix': 'nix',
+  'r': 'r',
+  'scala': 'scala',
+  'sc': 'scala',
+  'swift': 'swift',
+  'toml': 'toml',
+  'ini': 'ini',
+  'cfg': 'ini',
+  'conf': 'shell',
+  'xml': 'xml',
+  'xsl': 'xml',
+  'svg': 'xml',
+  'diff': 'diff',
+  'patch': 'diff',
+  'sql': 'sql',
+  'mysql': 'sql',
+  'pgsql': 'sql',
+  'plsql': 'sql',
+  'text': 'plain text',
+  'txt': 'plain text',
+  'log': 'plain text',
+  'plaintext': 'plain text',
+  '': 'plain text'
+};
+
+// Notion 支持的所有语言
+const NOTION_LANGUAGES = new Set([
+  'abap', 'arduino', 'bash', 'basic', 'c', 'clojure', 'coffeescript', 'c++', 'c#',
+  'css', 'dart', 'diff', 'docker', 'elixir', 'elm', 'erlang', 'flow', 'fortran',
+  'f#', 'gherkin', 'glsl', 'go', 'graphql', 'groovy', 'haskell', 'html', 'java',
+  'javascript', 'json', 'julia', 'kotlin', 'latex', 'less', 'lisp', 'livescript',
+  'lua', 'makefile', 'markdown', 'markup', 'matlab', 'mermaid', 'nix', 'objective-c',
+  'ocaml', 'pascal', 'perl', 'php', 'plain text', 'powershell', 'prolog', 'protobuf',
+  'python', 'r', 'reason', 'ruby', 'rust', 'sass', 'scala', 'scheme', 'scss',
+  'shell', 'sql', 'swift', 'typescript', 'vb.net', 'verilog', 'vhdl', 'visual basic',
+  'webassembly', 'xml', 'yaml', 'java/c/c++/c#', 'notion formula', 'toml', 'ini', 'vue'
+]);
+
+// 规范化语言名称
+function normalizeLanguage(lang) {
+  if (!lang || lang.trim() === '') {
+    return 'plain text';
+  }
+  
+  const normalized = lang.toLowerCase().trim();
+  
+  // 先检查别名映射表
+  if (LANGUAGE_ALIAS_MAP[normalized]) {
+    return LANGUAGE_ALIAS_MAP[normalized];
+  }
+  
+  // 检查是否是 Notion 直接支持的语言
+  if (NOTION_LANGUAGES.has(normalized)) {
+    return normalized;
+  }
+  
+  // 未知语言，使用 plain text
+  console.log(`  Warning: Unknown language "${lang}", using "plain text"`);
+  return 'plain text';
+}
 // =============================
 
 // 缓存已创建的文件夹页面
@@ -97,14 +251,16 @@ function markdownToNotionBlocks(content) {
     } else if (line.startsWith('# ')) {
       blocks.push({ object: 'block', type: 'heading_1', heading_1: { rich_text: [{ type: 'text', text: { content: line.slice(2) } }] } });
     } else if (line.startsWith('```')) {
-      const lang = line.slice(3) || 'plain text';
+      // 使用语言规范化函数
+      const rawLang = line.slice(3).trim();
+      const lang = normalizeLanguage(rawLang);
       const codeLines = [];
       i++;
       while (i < lines.length && !lines[i].startsWith('```')) {
         codeLines.push(lines[i]);
         i++;
       }
-      blocks.push({ object: 'block', type: 'code', code: { rich_text: [{ type: 'text', text: { content: codeLines.join('\n') } }], language: lang.toLowerCase() || 'plain text' } });
+      blocks.push({ object: 'block', type: 'code', code: { rich_text: [{ type: 'text', text: { content: codeLines.join('\n') } }], language: lang } });
     } else if (line.startsWith('- ') || line.startsWith('* ')) {
       blocks.push({ object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ type: 'text', text: { content: line.slice(2) } }] } });
     } else if (/^\d+\.\s/.test(line)) {
@@ -120,10 +276,12 @@ function markdownToNotionBlocks(content) {
 function codeFileToNotionBlocks(content, language) {
   const blocks = [];
   const maxChunkSize = 1900;
+  // 确保语言名称是 Notion 接受的
+  const normalizedLang = normalizeLanguage(language);
   for (let i = 0; i < content.length; i += maxChunkSize) {
     blocks.push({
       object: 'block', type: 'code',
-      code: { rich_text: [{ type: 'text', text: { content: content.slice(i, i + maxChunkSize) } }], language }
+      code: { rich_text: [{ type: 'text', text: { content: content.slice(i, i + maxChunkSize) } }], language: normalizedLang }
     });
   }
   return blocks;
