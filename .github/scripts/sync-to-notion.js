@@ -6,58 +6,62 @@ const notion = new Client({ auth: process.env.NOTION_TOKEN });
 const projectPageId = process.env.NOTION_PROJECT_PAGE_ID;
 
 // ========== 配置区域 ==========
-// 要同步的目录（会递归扫描）
-const SYNC_DIRS = [
-  '.',           // 根目录
-  // 'docs',     // docs 目录
-  // 'src',      // src 目录
-];
+const SYNC_DIRS = ['.'];
 
-// 排除的文件/目录
 const EXCLUDE_PATTERNS = [
-  'node_modules',
-  '.git',
-  '.github',
-  '.kiro',
-  'package.json',
-  'package-lock.json',
-  '.gitignore',
-  '.DS_Store',
+  'node_modules', '.git', '.github', '.kiro',
+  'package.json', 'package-lock.json', '.gitignore', '.DS_Store',
 ];
 
-// 支持双向同步的扩展名（Markdown）
 const BIDIRECTIONAL_EXTENSIONS = ['.md'];
 
-// 支持单向同步的代码文件扩展名
+// Notion 支持的所有代码语言
 const CODE_EXTENSIONS = {
-  '.js': 'javascript',
-  '.ts': 'typescript',
-  '.py': 'python',
-  '.java': 'java',
-  '.go': 'go',
-  '.rs': 'rust',
-  '.cpp': 'cpp',
-  '.c': 'c',
-  '.css': 'css',
-  '.html': 'html',
-  '.json': 'json',
-  '.yaml': 'yaml',
-  '.yml': 'yaml',
-  '.xml': 'xml',
-  '.sql': 'sql',
-  '.sh': 'bash',
-  '.rb': 'ruby',
-  '.php': 'php',
-  '.swift': 'swift',
-  '.kt': 'kotlin',
-  '.vue': 'javascript',
-  '.jsx': 'javascript',
-  '.tsx': 'typescript',
+  '.abap': 'abap', '.arduino': 'arduino', '.bash': 'bash', '.basic': 'basic',
+  '.c': 'c', '.clj': 'clojure', '.clojure': 'clojure', '.coffee': 'coffeescript',
+  '.cpp': 'c++', '.cc': 'c++', '.cxx': 'c++', '.cs': 'c#', '.css': 'css',
+  '.dart': 'dart', '.diff': 'diff', '.docker': 'docker', '.dockerfile': 'docker',
+  '.elixir': 'elixir', '.ex': 'elixir', '.elm': 'elm', '.erb': 'ruby',
+  '.erl': 'erlang', '.flow': 'flow', '.f': 'fortran', '.f90': 'fortran',
+  '.fs': 'f#', '.gherkin': 'gherkin', '.feature': 'gherkin',
+  '.glsl': 'glsl', '.go': 'go', '.graphql': 'graphql', '.gql': 'graphql',
+  '.groovy': 'groovy', '.haskell': 'haskell', '.hs': 'haskell',
+  '.html': 'html', '.htm': 'html', '.java': 'java', '.js': 'javascript',
+  '.mjs': 'javascript', '.cjs': 'javascript', '.json': 'json',
+  '.jsonc': 'json', '.julia': 'julia', '.jl': 'julia',
+  '.kt': 'kotlin', '.kts': 'kotlin', '.latex': 'latex', '.tex': 'latex',
+  '.less': 'less', '.lisp': 'lisp', '.cl': 'lisp', '.livescript': 'livescript',
+  '.ls': 'livescript', '.lua': 'lua', '.makefile': 'makefile', '.mk': 'makefile',
+  '.md': 'markdown', '.markup': 'markup', '.matlab': 'm', '.m': 'matlab',
+  '.mermaid': 'mermaid', '.nix': 'nix', '.objc': 'objective-c',
+  '.ocaml': 'ocaml', '.ml': 'ocaml', '.pascal': 'pascal', '.pas': 'pascal',
+  '.perl': 'perl', '.pl': 'perl', '.php': 'php', '.txt': 'plain text',
+  '.text': 'plain text', '.ps1': 'powershell', '.psm1': 'powershell',
+  '.proto': 'protobuf', '.py': 'python', '.pyw': 'python',
+  '.r': 'r', '.R': 'r', '.reason': 'reason', '.re': 'reason',
+  '.rb': 'ruby', '.rs': 'rust', '.sass': 'sass', '.scala': 'scala',
+  '.sc': 'scala', '.scheme': 'scheme', '.scm': 'scheme', '.scss': 'scss',
+  '.sh': 'shell', '.zsh': 'shell', '.fish': 'shell',
+  '.sql': 'sql', '.swift': 'swift', '.ts': 'typescript', '.mts': 'typescript',
+  '.cts': 'typescript', '.tsx': 'typescript', '.jsx': 'javascript',
+  '.vb': 'vb.net', '.vbs': 'vb.net', '.verilog': 'verilog', '.v': 'verilog',
+  '.vhdl': 'vhdl', '.vhd': 'vhdl', '.vue': 'vue',
+  '.wasm': 'webassembly', '.xml': 'xml', '.xsl': 'xml', '.xslt': 'xml',
+  '.yaml': 'yaml', '.yml': 'yaml', '.zig': 'zig',
+  // 配置文件
+  '.env': 'shell', '.gitattributes': 'shell', '.editorconfig': 'shell',
+  '.prettierrc': 'json', '.eslintrc': 'json', '.babelrc': 'json',
+  '.npmrc': 'shell', '.nvmrc': 'shell',
+  // 其他
+  '.toml': 'toml', '.ini': 'ini', '.cfg': 'ini', '.conf': 'shell',
+  '.log': 'plain text', '.csv': 'plain text',
 };
 
-// 图片扩展名
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'];
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico', '.bmp'];
 // =============================
+
+// 缓存已创建的文件夹页面
+const folderPageCache = {};
 
 function shouldExclude(filePath) {
   return EXCLUDE_PATTERNS.some(pattern => filePath.includes(pattern));
@@ -65,12 +69,10 @@ function shouldExclude(filePath) {
 
 function getAllFiles(dir, fileList = []) {
   if (!fs.existsSync(dir)) return fileList;
-  
   const files = fs.readdirSync(dir);
   for (const file of files) {
     const filePath = path.join(dir, file);
     if (shouldExclude(filePath)) continue;
-    
     const stat = fs.statSync(filePath);
     if (stat.isDirectory()) {
       getAllFiles(filePath, fileList);
@@ -88,25 +90,12 @@ function markdownToNotionBlocks(content) {
 
   while (i < lines.length) {
     const line = lines[i];
-
     if (line.startsWith('### ')) {
-      blocks.push({
-        object: 'block',
-        type: 'heading_3',
-        heading_3: { rich_text: [{ type: 'text', text: { content: line.slice(4) } }] }
-      });
+      blocks.push({ object: 'block', type: 'heading_3', heading_3: { rich_text: [{ type: 'text', text: { content: line.slice(4) } }] } });
     } else if (line.startsWith('## ')) {
-      blocks.push({
-        object: 'block',
-        type: 'heading_2',
-        heading_2: { rich_text: [{ type: 'text', text: { content: line.slice(3) } }] }
-      });
+      blocks.push({ object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: line.slice(3) } }] } });
     } else if (line.startsWith('# ')) {
-      blocks.push({
-        object: 'block',
-        type: 'heading_1',
-        heading_1: { rich_text: [{ type: 'text', text: { content: line.slice(2) } }] }
-      });
+      blocks.push({ object: 'block', type: 'heading_1', heading_1: { rich_text: [{ type: 'text', text: { content: line.slice(2) } }] } });
     } else if (line.startsWith('```')) {
       const lang = line.slice(3) || 'plain text';
       const codeLines = [];
@@ -115,89 +104,40 @@ function markdownToNotionBlocks(content) {
         codeLines.push(lines[i]);
         i++;
       }
-      blocks.push({
-        object: 'block',
-        type: 'code',
-        code: {
-          rich_text: [{ type: 'text', text: { content: codeLines.join('\n') } }],
-          language: lang.toLowerCase() === '' ? 'plain text' : lang.toLowerCase()
-        }
-      });
+      blocks.push({ object: 'block', type: 'code', code: { rich_text: [{ type: 'text', text: { content: codeLines.join('\n') } }], language: lang.toLowerCase() || 'plain text' } });
     } else if (line.startsWith('- ') || line.startsWith('* ')) {
-      blocks.push({
-        object: 'block',
-        type: 'bulleted_list_item',
-        bulleted_list_item: { rich_text: [{ type: 'text', text: { content: line.slice(2) } }] }
-      });
+      blocks.push({ object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ type: 'text', text: { content: line.slice(2) } }] } });
     } else if (/^\d+\.\s/.test(line)) {
-      blocks.push({
-        object: 'block',
-        type: 'numbered_list_item',
-        numbered_list_item: { rich_text: [{ type: 'text', text: { content: line.replace(/^\d+\.\s/, '') } }] }
-      });
+      blocks.push({ object: 'block', type: 'numbered_list_item', numbered_list_item: { rich_text: [{ type: 'text', text: { content: line.replace(/^\d+\.\s/, '') } }] } });
     } else if (line.trim() !== '') {
-      blocks.push({
-        object: 'block',
-        type: 'paragraph',
-        paragraph: { rich_text: [{ type: 'text', text: { content: line } }] }
-      });
+      blocks.push({ object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: line } }] } });
     }
     i++;
   }
   return blocks;
 }
 
-function codeFileToNotionBlocks(content, language, filePath) {
+function codeFileToNotionBlocks(content, language) {
   const blocks = [];
-  
-  // 文件路径标题
-  blocks.push({
-    object: 'block',
-    type: 'callout',
-    callout: {
-      rich_text: [{ type: 'text', text: { content: `📄 ${filePath}` } }],
-      icon: { emoji: '📄' }
-    }
-  });
-  
-  // 代码内容（Notion 限制每个 block 2000 字符）
   const maxChunkSize = 1900;
   for (let i = 0; i < content.length; i += maxChunkSize) {
     blocks.push({
-      object: 'block',
-      type: 'code',
-      code: {
-        rich_text: [{ type: 'text', text: { content: content.slice(i, i + maxChunkSize) } }],
-        language: language
-      }
+      object: 'block', type: 'code',
+      code: { rich_text: [{ type: 'text', text: { content: content.slice(i, i + maxChunkSize) } }], language }
     });
   }
-  
   return blocks;
 }
 
 function imageFileToNotionBlocks(filePath, repoUrl) {
-  const rawUrl = `${repoUrl}/raw/main/${filePath}`;
-  return [{
-    object: 'block',
-    type: 'image',
-    image: {
-      type: 'external',
-      external: { url: rawUrl }
-    }
-  }];
+  return [{ object: 'block', type: 'image', image: { type: 'external', external: { url: `${repoUrl}/raw/main/${filePath}` } } }];
 }
 
 function otherFileToNotionBlocks(filePath, repoUrl) {
-  const fileUrl = `${repoUrl}/blob/main/${filePath}`;
-  return [{
-    object: 'block',
-    type: 'bookmark',
-    bookmark: { url: fileUrl }
-  }];
+  return [{ object: 'block', type: 'bookmark', bookmark: { url: `${repoUrl}/blob/main/${filePath}` } }];
 }
 
-async function findPageByTitle(parentId, title) {
+async function findChildPage(parentId, title) {
   const blocks = await notion.blocks.children.list({ block_id: parentId });
   for (const block of blocks.results) {
     if (block.type === 'child_page' && block.child_page.title === title) {
@@ -207,61 +147,89 @@ async function findPageByTitle(parentId, title) {
   return null;
 }
 
+async function getOrCreateFolderPage(parentId, folderName) {
+  const cacheKey = `${parentId}:${folderName}`;
+  if (folderPageCache[cacheKey]) return folderPageCache[cacheKey];
+
+  let pageId = await findChildPage(parentId, `📁 ${folderName}`);
+  if (!pageId) {
+    const page = await notion.pages.create({
+      parent: { page_id: parentId },
+      icon: { emoji: '📁' },
+      properties: { title: { title: [{ text: { content: `📁 ${folderName}` } }] } }
+    });
+    pageId = page.id;
+    console.log(`  Created folder: ${folderName}`);
+  }
+  folderPageCache[cacheKey] = pageId;
+  return pageId;
+}
+
 async function clearPageContent(pageId) {
   const blocks = await notion.blocks.children.list({ block_id: pageId });
   for (const block of blocks.results) {
-    await notion.blocks.delete({ block_id: block.id });
+    if (block.type !== 'child_page') {
+      await notion.blocks.delete({ block_id: block.id });
+    }
   }
 }
 
 async function syncFile(filePath, repoUrl) {
   const ext = path.extname(filePath).toLowerCase();
-  const pageTitle = filePath.replace(/\//g, ' - ').replace(ext, '');
-  
+  const fileName = path.basename(filePath);
+  const dirPath = path.dirname(filePath);
+  const folders = dirPath === '.' ? [] : dirPath.split(path.sep);
+
+  // 递归创建文件夹结构
+  let parentId = projectPageId;
+  for (const folder of folders) {
+    parentId = await getOrCreateFolderPage(parentId, folder);
+  }
+
   let blocks = [];
   let syncType = '';
-  
+  let icon = '📄';
+
   if (BIDIRECTIONAL_EXTENSIONS.includes(ext)) {
     const content = fs.readFileSync(filePath, 'utf-8');
     blocks = markdownToNotionBlocks(content);
     syncType = 'markdown';
+    icon = '📝';
   } else if (CODE_EXTENSIONS[ext]) {
     const content = fs.readFileSync(filePath, 'utf-8');
-    blocks = codeFileToNotionBlocks(content, CODE_EXTENSIONS[ext], filePath);
+    blocks = codeFileToNotionBlocks(content, CODE_EXTENSIONS[ext]);
     syncType = 'code';
+    icon = '💻';
   } else if (IMAGE_EXTENSIONS.includes(ext)) {
     blocks = imageFileToNotionBlocks(filePath, repoUrl);
     syncType = 'image';
+    icon = '🖼️';
   } else {
     blocks = otherFileToNotionBlocks(filePath, repoUrl);
     syncType = 'other';
+    icon = '📎';
   }
 
   console.log(`Syncing [${syncType}]: ${filePath}`);
 
-  const existingPageId = await findPageByTitle(projectPageId, pageTitle);
+  const existingPageId = await findChildPage(parentId, fileName);
 
   if (existingPageId) {
     await clearPageContent(existingPageId);
     for (let i = 0; i < blocks.length; i += 100) {
-      await notion.blocks.children.append({
-        block_id: existingPageId,
-        children: blocks.slice(i, i + 100)
-      });
+      await notion.blocks.children.append({ block_id: existingPageId, children: blocks.slice(i, i + 100) });
     }
-    console.log(`  Updated: ${pageTitle}`);
+    console.log(`  Updated: ${fileName}`);
   } else {
     const page = await notion.pages.create({
-      parent: { page_id: projectPageId },
-      properties: { title: { title: [{ text: { content: pageTitle } }] } }
+      parent: { page_id: parentId },
+      icon: { emoji: icon },
+      properties: { title: { title: [{ text: { content: fileName } }] } }
     });
     for (let i = 0; i < blocks.length; i += 100) {
-      await notion.blocks.children.append({
-        block_id: page.id,
-        children: blocks.slice(i, i + 100)
-      });
+      await notion.blocks.children.append({ block_id: page.id, children: blocks.slice(i, i + 100) });
     }
-    console.log(`  Created: ${pageTitle}`);
+    console.log(`  Created: ${fileName}`);
   }
 }
 
@@ -280,7 +248,7 @@ async function main() {
     allFiles = allFiles.concat(getAllFiles(dir));
   }
   allFiles = [...new Set(allFiles)];
-  
+
   console.log(`Found ${allFiles.length} files to sync`);
 
   for (const filePath of allFiles) {
