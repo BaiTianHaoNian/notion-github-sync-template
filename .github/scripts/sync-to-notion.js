@@ -6,13 +6,80 @@ const notion = new Client({ auth: process.env.NOTION_TOKEN });
 const projectPageId = process.env.NOTION_PROJECT_PAGE_ID;
 
 // ========== 配置区域 ==========
-// 修改这里来指定要同步的文件
-const SYNC_FILES = [
-  'README.md',
-  // 'docs/guide.md',
-  // 添加更多文件...
+// 要同步的目录（会递归扫描）
+const SYNC_DIRS = [
+  '.',           // 根目录
+  // 'docs',     // docs 目录
+  // 'src',      // src 目录
 ];
+
+// 排除的文件/目录
+const EXCLUDE_PATTERNS = [
+  'node_modules',
+  '.git',
+  '.github',
+  '.kiro',
+  'package.json',
+  'package-lock.json',
+  '.gitignore',
+  '.DS_Store',
+];
+
+// 支持双向同步的扩展名（Markdown）
+const BIDIRECTIONAL_EXTENSIONS = ['.md'];
+
+// 支持单向同步的代码文件扩展名
+const CODE_EXTENSIONS = {
+  '.js': 'javascript',
+  '.ts': 'typescript',
+  '.py': 'python',
+  '.java': 'java',
+  '.go': 'go',
+  '.rs': 'rust',
+  '.cpp': 'cpp',
+  '.c': 'c',
+  '.css': 'css',
+  '.html': 'html',
+  '.json': 'json',
+  '.yaml': 'yaml',
+  '.yml': 'yaml',
+  '.xml': 'xml',
+  '.sql': 'sql',
+  '.sh': 'bash',
+  '.rb': 'ruby',
+  '.php': 'php',
+  '.swift': 'swift',
+  '.kt': 'kotlin',
+  '.vue': 'javascript',
+  '.jsx': 'javascript',
+  '.tsx': 'typescript',
+};
+
+// 图片扩展名
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'];
 // =============================
+
+function shouldExclude(filePath) {
+  return EXCLUDE_PATTERNS.some(pattern => filePath.includes(pattern));
+}
+
+function getAllFiles(dir, fileList = []) {
+  if (!fs.existsSync(dir)) return fileList;
+  
+  const files = fs.readdirSync(dir);
+  for (const file of files) {
+    const filePath = path.join(dir, file);
+    if (shouldExclude(filePath)) continue;
+    
+    const stat = fs.statSync(filePath);
+    if (stat.isDirectory()) {
+      getAllFiles(filePath, fileList);
+    } else {
+      fileList.push(filePath);
+    }
+  }
+  return fileList;
+}
 
 function markdownToNotionBlocks(content) {
   const blocks = [];
@@ -68,7 +135,7 @@ function markdownToNotionBlocks(content) {
         type: 'numbered_list_item',
         numbered_list_item: { rich_text: [{ type: 'text', text: { content: line.replace(/^\d+\.\s/, '') } }] }
       });
-    } else if (line.trim() !== '' && line.trim()) {
+    } else if (line.trim() !== '') {
       blocks.push({
         object: 'block',
         type: 'paragraph',
@@ -78,6 +145,56 @@ function markdownToNotionBlocks(content) {
     i++;
   }
   return blocks;
+}
+
+function codeFileToNotionBlocks(content, language, filePath) {
+  const blocks = [];
+  
+  // 文件路径标题
+  blocks.push({
+    object: 'block',
+    type: 'callout',
+    callout: {
+      rich_text: [{ type: 'text', text: { content: `📄 ${filePath}` } }],
+      icon: { emoji: '📄' }
+    }
+  });
+  
+  // 代码内容（Notion 限制每个 block 2000 字符）
+  const maxChunkSize = 1900;
+  for (let i = 0; i < content.length; i += maxChunkSize) {
+    blocks.push({
+      object: 'block',
+      type: 'code',
+      code: {
+        rich_text: [{ type: 'text', text: { content: content.slice(i, i + maxChunkSize) } }],
+        language: language
+      }
+    });
+  }
+  
+  return blocks;
+}
+
+function imageFileToNotionBlocks(filePath, repoUrl) {
+  const rawUrl = `${repoUrl}/raw/main/${filePath}`;
+  return [{
+    object: 'block',
+    type: 'image',
+    image: {
+      type: 'external',
+      external: { url: rawUrl }
+    }
+  }];
+}
+
+function otherFileToNotionBlocks(filePath, repoUrl) {
+  const fileUrl = `${repoUrl}/blob/main/${filePath}`;
+  return [{
+    object: 'block',
+    type: 'bookmark',
+    bookmark: { url: fileUrl }
+  }];
 }
 
 async function findPageByTitle(parentId, title) {
@@ -97,13 +214,30 @@ async function clearPageContent(pageId) {
   }
 }
 
-async function syncFile(filePath) {
-  const content = fs.readFileSync(filePath, 'utf-8');
-  const fileName = path.basename(filePath, '.md');
-  const pageTitle = fileName.charAt(0).toUpperCase() + fileName.slice(1);
-  const blocks = markdownToNotionBlocks(content);
+async function syncFile(filePath, repoUrl) {
+  const ext = path.extname(filePath).toLowerCase();
+  const pageTitle = filePath.replace(/\//g, ' - ').replace(ext, '');
+  
+  let blocks = [];
+  let syncType = '';
+  
+  if (BIDIRECTIONAL_EXTENSIONS.includes(ext)) {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    blocks = markdownToNotionBlocks(content);
+    syncType = 'markdown';
+  } else if (CODE_EXTENSIONS[ext]) {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    blocks = codeFileToNotionBlocks(content, CODE_EXTENSIONS[ext], filePath);
+    syncType = 'code';
+  } else if (IMAGE_EXTENSIONS.includes(ext)) {
+    blocks = imageFileToNotionBlocks(filePath, repoUrl);
+    syncType = 'image';
+  } else {
+    blocks = otherFileToNotionBlocks(filePath, repoUrl);
+    syncType = 'other';
+  }
 
-  console.log(`Syncing: ${filePath} -> ${pageTitle}`);
+  console.log(`Syncing [${syncType}]: ${filePath}`);
 
   const existingPageId = await findPageByTitle(projectPageId, pageTitle);
 
@@ -137,16 +271,21 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Syncing ${SYNC_FILES.length} files to Notion`);
+  const repoUrl = process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY
+    ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}`
+    : 'https://github.com/your-repo';
 
-  for (const filePath of SYNC_FILES) {
-    const fullPath = path.join(process.cwd(), filePath);
-    if (!fs.existsSync(fullPath)) {
-      console.log(`File not found: ${filePath}, skipping...`);
-      continue;
-    }
+  let allFiles = [];
+  for (const dir of SYNC_DIRS) {
+    allFiles = allFiles.concat(getAllFiles(dir));
+  }
+  allFiles = [...new Set(allFiles)];
+  
+  console.log(`Found ${allFiles.length} files to sync`);
+
+  for (const filePath of allFiles) {
     try {
-      await syncFile(filePath);
+      await syncFile(filePath, repoUrl);
     } catch (error) {
       console.error(`Error syncing ${filePath}:`, error.message);
     }
