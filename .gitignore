@@ -1,0 +1,6 @@
+node_modules/
+package-lock.json
+package.json
+
+# Kiro 本地配置（包含敏感信息）
+.kiro/settings/
