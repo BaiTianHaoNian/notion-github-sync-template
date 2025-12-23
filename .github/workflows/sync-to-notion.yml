@@ -25,7 +25,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm install @notionhq/client
+        run: npm install @notionhq/client form-data node-fetch
 
       - name: Sync to Notion
         env:
