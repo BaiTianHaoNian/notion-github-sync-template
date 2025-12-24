@@ -2,6 +2,7 @@ const { Client } = require('@notionhq/client');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const { execSync } = require('child_process');
 
 const notion = new Client({ auth: process.env.NOTION_TOKEN });
 const projectPageId = process.env.NOTION_PROJECT_PAGE_ID;
@@ -56,8 +57,14 @@ const CODE_EXTENSIONS = {
   '.log': 'plain text', '.csv': 'plain text',
 };
 
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico', '.bmp'];
-const DOCUMENT_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.zip', '.rar', '.7z', '.tar', '.gz'];
+// Notion 支持的文件类型 (根据官方API文档)
+const IMAGE_EXTENSIONS = ['.gif', '.heic', '.jpeg', '.jpg', '.png', '.svg', '.tif', '.tiff', '.webp', '.ico'];
+const DOCUMENT_EXTENSIONS = ['.pdf', '.txt', '.json', '.doc', '.dot', '.docx', '.dotx', '.xls', '.xlt', '.xla', '.xlsx', '.xltx', '.ppt', '.pot', '.pps', '.ppa', '.pptx', '.potx'];
+const VIDEO_EXTENSIONS = ['.amv', '.asf', '.wmv', '.avi', '.f4v', '.flv', '.gifv', '.m4v', '.mp4', '.mkv', '.webm', '.mov', '.qt', '.mpeg', '.mpg'];
+const AUDIO_EXTENSIONS = ['.aac', '.adts', '.mid', '.midi', '.mp3', '.mpga', '.m4a', '.m4b', '.oga', '.ogg', '.wav', '.wma'];
+// 不支持的压缩文件类型 - 将创建链接而非上传
+const UNSUPPORTED_ARCHIVE_EXTENSIONS = ['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz'];
+
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 const LANGUAGE_ALIAS_MAP = {
@@ -96,6 +103,22 @@ const folderPageCache = {};
 
 function shouldExclude(filePath) {
   return EXCLUDE_PATTERNS.some(pattern => filePath.includes(pattern));
+}
+
+// ========== 增量同步：获取变化的文件 ==========
+function getChangedFiles() {
+  try {
+    const result = execSync('git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    const changedFiles = result.trim().split('\n').filter(f => f && !shouldExclude(f));
+    console.log(`📝 检测到 ${changedFiles.length} 个变化的文件`);
+    return changedFiles;
+  } catch (error) {
+    console.log('⚠️ 无法获取git变化，将同步所有文件');
+    return null;
+  }
 }
 
 function getAllFiles(dir, fileList = []) {
@@ -148,12 +171,28 @@ function createMultipartBody(filePath, fileName, boundary) {
   const ext = path.extname(fileName).toLowerCase();
   const mimeTypes = {
     '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-    '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon', '.bmp': 'image/bmp',
-    '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    '.zip': 'application/zip', '.rar': 'application/x-rar-compressed', '.7z': 'application/x-7z-compressed',
-    '.tar': 'application/x-tar', '.gz': 'application/gzip'
+    '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon', '.heic': 'image/heic',
+    '.tif': 'image/tiff', '.tiff': 'image/tiff',
+    '.pdf': 'application/pdf', '.txt': 'text/plain', '.json': 'application/json',
+    '.doc': 'application/msword', '.dot': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.dotx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.template',
+    '.xls': 'application/vnd.ms-excel', '.xlt': 'application/vnd.ms-excel', '.xla': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.xltx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.template',
+    '.ppt': 'application/vnd.ms-powerpoint', '.pot': 'application/vnd.ms-powerpoint',
+    '.pps': 'application/vnd.ms-powerpoint', '.ppa': 'application/vnd.ms-powerpoint',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.potx': 'application/vnd.openxmlformats-officedocument.presentationml.template',
+    '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.qt': 'video/quicktime',
+    '.avi': 'video/x-msvideo', '.wmv': 'video/x-ms-wmv', '.asf': 'video/x-ms-asf',
+    '.mkv': 'video/x-matroska', '.webm': 'video/webm', '.flv': 'video/x-flv',
+    '.f4v': 'video/x-f4v', '.amv': 'video/x-amv', '.gifv': 'video/mp4',
+    '.mpeg': 'video/mpeg', '.mpg': 'video/mpeg',
+    '.mp3': 'audio/mpeg', '.mpga': 'audio/mpeg', '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.m4a': 'audio/mp4', '.m4b': 'audio/mp4',
+    '.aac': 'audio/aac', '.adts': 'audio/aac', '.wma': 'audio/x-ms-wma',
+    '.mid': 'audio/midi', '.midi': 'audio/midi'
   };
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 
@@ -169,12 +208,12 @@ async function uploadFileToNotion(filePath) {
   const stats = fs.statSync(filePath);
   
   if (stats.size > MAX_FILE_SIZE) {
-    console.log(`  Skipping ${fileName}: File too large (${(stats.size / 1024 / 1024).toFixed(2)}MB > 20MB)`);
+    console.log(`  ⚠️ 跳过 ${fileName}: 文件过大 (${(stats.size / 1024 / 1024).toFixed(2)}MB > 20MB)`);
     return null;
   }
 
   try {
-    console.log(`  Creating upload for: ${fileName}`);
+    console.log(`  📤 上传中: ${fileName}`);
     const createResponse = await httpsRequest('https://api.notion.com/v1/file_uploads', {
       method: 'POST',
       headers: {
@@ -185,11 +224,10 @@ async function uploadFileToNotion(filePath) {
     }, JSON.stringify({}));
 
     if (!createResponse.ok) {
-      throw new Error(`Create upload failed: ${createResponse.status}`);
+      throw new Error(`创建上传失败: ${createResponse.status}`);
     }
 
     const uploadInfo = await createResponse.json();
-    console.log(`  Upload ID: ${uploadInfo.id}`);
 
     const boundary = '----FormBoundary' + Math.random().toString(36).substring(2);
     const body = createMultipartBody(filePath, fileName, boundary);
@@ -206,15 +244,15 @@ async function uploadFileToNotion(filePath) {
 
     if (!uploadResponse.ok) {
       const errorText = await uploadResponse.text();
-      throw new Error(`Upload failed: ${uploadResponse.status} - ${errorText}`);
+      throw new Error(`上传失败: ${uploadResponse.status} - ${errorText}`);
     }
 
     const uploadResult = await uploadResponse.json();
-    console.log(`  Uploaded successfully: ${fileName}`);
+    console.log(`  ✅ 上传成功: ${fileName}`);
     return uploadResult.id;
 
   } catch (error) {
-    console.error(`  Error uploading ${fileName}:`, error.message);
+    console.error(`  ❌ 上传错误 ${fileName}:`, error.message);
     return null;
   }
 }
@@ -225,6 +263,34 @@ async function createImageBlock(fileUploadId) {
 
 async function createFileBlock(fileUploadId, fileName) {
   return [{ object: 'block', type: 'file', file: { type: 'file_upload', file_upload: { id: fileUploadId }, caption: [{ type: 'text', text: { content: fileName } }] } }];
+}
+
+async function createVideoBlock(fileUploadId) {
+  return [{ object: 'block', type: 'video', video: { type: 'file_upload', file_upload: { id: fileUploadId } } }];
+}
+
+async function createAudioBlock(fileUploadId) {
+  return [{ object: 'block', type: 'audio', audio: { type: 'file_upload', file_upload: { id: fileUploadId } } }];
+}
+
+function createUnsupportedFileBlock(fileName, filePath) {
+  const repoUrl = process.env.GITHUB_REPOSITORY ? 
+    `https://github.com/${process.env.GITHUB_REPOSITORY}/blob/main/${filePath}` : 
+    `文件: ${filePath}`;
+  
+  return [{
+    object: 'block',
+    type: 'callout',
+    callout: {
+      rich_text: [{ type: 'text', text: { content: `📦 ${fileName}\n此文件类型不支持直接上传到Notion，请在GitHub查看` } }],
+      icon: { emoji: '📦' },
+      color: 'gray_background'
+    }
+  }, {
+    object: 'block',
+    type: 'bookmark',
+    bookmark: { url: repoUrl, caption: [{ type: 'text', text: { content: `在GitHub查看: ${fileName}` } }] }
+  }];
 }
 
 function markdownToNotionBlocks(content) {
@@ -282,7 +348,7 @@ async function getOrCreateFolderPage(parentId, folderName) {
   if (!pageId) {
     const page = await notion.pages.create({ parent: { page_id: parentId }, icon: { emoji: '📁' }, properties: { title: { title: [{ text: { content: `📁 ${folderName}` } }] } } });
     pageId = page.id;
-    console.log(`  Created folder: ${folderName}`);
+    console.log(`  📁 创建文件夹: ${folderName}`);
   }
   folderPageCache[cacheKey] = pageId;
   return pageId;
@@ -319,43 +385,76 @@ async function syncFile(filePath) {
   } else if (IMAGE_EXTENSIONS.includes(ext)) {
     const fileUploadId = await uploadFileToNotion(filePath);
     if (fileUploadId) { blocks = await createImageBlock(fileUploadId); syncType = 'image'; icon = '🖼️'; }
-    else { console.log(`  Skipped image: ${fileName}`); return; }
+    else { console.log(`  ⏭️ 跳过图片: ${fileName}`); return; }
+  } else if (VIDEO_EXTENSIONS.includes(ext)) {
+    const fileUploadId = await uploadFileToNotion(filePath);
+    if (fileUploadId) { blocks = await createVideoBlock(fileUploadId); syncType = 'video'; icon = '🎬'; }
+    else { console.log(`  ⏭️ 跳过视频: ${fileName}`); return; }
+  } else if (AUDIO_EXTENSIONS.includes(ext)) {
+    const fileUploadId = await uploadFileToNotion(filePath);
+    if (fileUploadId) { blocks = await createAudioBlock(fileUploadId); syncType = 'audio'; icon = '🎵'; }
+    else { console.log(`  ⏭️ 跳过音频: ${fileName}`); return; }
   } else if (DOCUMENT_EXTENSIONS.includes(ext)) {
     const fileUploadId = await uploadFileToNotion(filePath);
     if (fileUploadId) { blocks = await createFileBlock(fileUploadId, fileName); syncType = 'document'; icon = '📎'; }
-    else { console.log(`  Skipped document: ${fileName}`); return; }
+    else { console.log(`  ⏭️ 跳过文档: ${fileName}`); return; }
+  } else if (UNSUPPORTED_ARCHIVE_EXTENSIONS.includes(ext)) {
+    blocks = createUnsupportedFileBlock(fileName, filePath);
+    syncType = 'archive-link';
+    icon = '📦';
+    console.log(`  📦 压缩文件 ${fileName} 将创建GitHub链接`);
   } else {
     blocks = [{ object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: `文件: ${fileName} (${ext} 格式暂不支持预览)` } }] } }];
     syncType = 'other';
   }
 
-  console.log(`Syncing [${syncType}]: ${filePath}`);
+  console.log(`🔄 同步 [${syncType}]: ${filePath}`);
 
   const existingPageId = await findChildPage(parentId, fileName);
   if (existingPageId) {
     await clearPageContent(existingPageId);
     for (let i = 0; i < blocks.length; i += 100) { await notion.blocks.children.append({ block_id: existingPageId, children: blocks.slice(i, i + 100) }); }
-    console.log(`  Updated: ${fileName}`);
+    console.log(`  ✏️ 更新: ${fileName}`);
   } else {
     const page = await notion.pages.create({ parent: { page_id: parentId }, icon: { emoji: icon }, properties: { title: { title: [{ text: { content: fileName } }] } } });
     for (let i = 0; i < blocks.length; i += 100) { await notion.blocks.children.append({ block_id: page.id, children: blocks.slice(i, i + 100) }); }
-    console.log(`  Created: ${fileName}`);
+    console.log(`  ✨ 创建: ${fileName}`);
   }
 }
 
 async function main() {
-  if (!process.env.NOTION_TOKEN || !process.env.NOTION_PROJECT_PAGE_ID) { console.error('Missing NOTION_TOKEN or NOTION_PROJECT_PAGE_ID'); process.exit(1); }
-
-  let allFiles = [];
-  for (const dir of SYNC_DIRS) { allFiles = allFiles.concat(getAllFiles(dir)); }
-  allFiles = [...new Set(allFiles)];
-
-  console.log(`Found ${allFiles.length} files to sync`);
-  for (const filePath of allFiles) {
-    try { await syncFile(filePath); }
-    catch (error) { console.error(`Error syncing ${filePath}:`, error.message); }
+  if (!process.env.NOTION_TOKEN || !process.env.NOTION_PROJECT_PAGE_ID) { 
+    console.error('❌ 缺少 NOTION_TOKEN 或 NOTION_PROJECT_PAGE_ID'); 
+    process.exit(1); 
   }
-  console.log('Sync completed!');
+
+  const incrementalSync = process.env.INCREMENTAL_SYNC !== 'false';
+  let filesToSync = [];
+
+  if (incrementalSync) {
+    const changedFiles = getChangedFiles();
+    if (changedFiles && changedFiles.length > 0) {
+      filesToSync = changedFiles.filter(f => fs.existsSync(f));
+      console.log(`🚀 增量同步模式: 同步 ${filesToSync.length} 个变化的文件`);
+    } else if (changedFiles && changedFiles.length === 0) {
+      console.log('✅ 没有检测到文件变化，跳过同步');
+      return;
+    } else {
+      for (const dir of SYNC_DIRS) { filesToSync = filesToSync.concat(getAllFiles(dir)); }
+      filesToSync = [...new Set(filesToSync)];
+      console.log(`📦 全量同步模式: 同步 ${filesToSync.length} 个文件`);
+    }
+  } else {
+    for (const dir of SYNC_DIRS) { filesToSync = filesToSync.concat(getAllFiles(dir)); }
+    filesToSync = [...new Set(filesToSync)];
+    console.log(`📦 全量同步模式: 同步 ${filesToSync.length} 个文件`);
+  }
+
+  for (const filePath of filesToSync) {
+    try { await syncFile(filePath); }
+    catch (error) { console.error(`❌ 同步错误 ${filePath}:`, error.message); }
+  }
+  console.log('🎉 同步完成!');
 }
 
 main();
